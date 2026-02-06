@@ -66,7 +66,7 @@ def mcp_endpoint():
     token = auth_header.split(' ')[1]
     
     # Check if the token is valid os.getenv('MCP_TOKEN')
-    if token != "Pradeep123":
+    if token != os.getenv('MCP_TOKEN'):
         return jsonify({
             "jsonrpc": "2.0",
             "error": {
@@ -129,4 +129,5 @@ def mcp_endpoint():
 if __name__ == "__main__":
     # Run Flask development server with debug mode enabled
     # Change port to 3000 if needed: port=3000
+
     app.run(debug=True, host='localhost', port=3000)
