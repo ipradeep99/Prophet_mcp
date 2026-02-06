@@ -1,8 +1,5 @@
 Flask==2.3.3
-Werkzeug==2.3.7
-gunicorn==23.0.0
 requests==2.31.0
-sendgrid==6.9.7
 pandas==2.3.3
 # Prophet is incompatible with NumPy 2.x (uses removed np.float_). Pin numpy<2.
 numpy>=1.15.4,<2
