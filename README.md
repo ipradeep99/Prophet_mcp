@@ -119,7 +119,7 @@ The MCP endpoint is: **http://localhost:3000/mcp**.
 Requests must include:
 
 - Header: `Authorization: Bearer <your-token>`  
-The token is configured in `app.py` (e.g. `"Pradeep123"`). Change it for your environment.
+The token is configured in `app.py` (e.g. `MCP_TOKEN`). Change it for your environment.
 
 ---
 
@@ -146,10 +146,10 @@ import json
 def call_tool_with_args(base_url="http://localhost:3000", token=None):
     """
     Calls /mcp with tools/call → forecast_time_series.
-    Token must match the one in app.py (e.g. "Pradeep123").
+    Token must match the one in app.py (e.g. 'MCP_TOKEN').
     """
     if token is None:
-        token = "Pradeep123"
+        token = 'MCP_TOKEN'
     if not token:
         raise ValueError("MCP token missing. Pass token=... or set it in app.py.")
 
