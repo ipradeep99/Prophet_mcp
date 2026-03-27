@@ -2,7 +2,6 @@ import requests
 import json
 import webbrowser
 import os
-import re
 
 def call_tool_with_args(base_url="http://localhost:3000", token=None):
     """
@@ -49,117 +48,136 @@ def call_tool_with_args(base_url="http://localhost:3000", token=None):
         return None
 
 
-def extract_chartjs_config(text):
+def extract_chartjs_config(content_items):
     """
-    Extract the Chart.js config dict from the tool's text output.
-    Looks for the 'chartjs = { ... }' block in the summary.
+    Extract the Chart.js config dict from the MCP response content items.
+    The new format returns chartjs config in content[1] as:
+      'chartjs_config:{...json...}'
     """
-    # Find the chartjs config block
-    match = re.search(r'chartjs\s*=\s*(\{.*\})\s*$', text, re.DOTALL)
-    if match:
-        config_str = match.group(1)
-        # Convert Python-style booleans/None to JSON
-        config_str = config_str.replace("True", "true").replace("False", "false").replace("None", "null")
-        try:
-            return json.loads(config_str)
-        except json.JSONDecodeError:
-            # Try fixing common issues (trailing commas, etc.)
-            config_str = re.sub(r',\s*}', '}', config_str)
-            config_str = re.sub(r',\s*]', ']', config_str)
-            return json.loads(config_str)
+    for item in content_items:
+        text = item.get("text", "")
+        if text.startswith("chartjs_config:"):
+            json_str = text[len("chartjs_config:"):]
+            return json.loads(json_str)
     return None
 
 
 def generate_html(chartjs_config, title="Prophet Forecast"):
     """
-    Generate an HTML page with Chart.js rendering the forecast.
+    Generate a premium HTML page with Chart.js rendering the forecast.
+    Handles the annotation plugin and replaces filter function placeholders.
     """
+    config_json = json.dumps(chartjs_config, indent=2)
+    config_json = config_json.replace(
+        '"__FILTER_FN__"',
+        'function(item) { return !item.text.includes("Confidence") && !item.text.includes("Fitted"); }'
+    )
+    config_json = config_json.replace(
+        '"__TOOLTIP_FILTER_FN__"',
+        'function(tooltipItem) { return !tooltipItem.dataset.label.includes("Confidence"); }'
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
     <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+        * {{{{ margin: 0; padding: 0; box-sizing: border-box; }}}}
+        body {{{{
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            background: linear-gradient(145deg, #0b1120 0%, #131b2e 35%, #1a1040 70%, #0f0c29 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 20px;
-        }}
-        .chart-container {{
-            background: rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 16px;
-            padding: 30px;
-            width: 90%;
-            max-width: 900px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-        }}
-        h1 {{
-            color: #e0e0e0;
+            padding: 24px;
+        }}}}
+        .chart-wrapper {{{{
+            width: 95%;
+            max-width: 1000px;
+        }}}}
+        .chart-header {{{{
             text-align: center;
-            margin-bottom: 20px;
-            font-size: 1.5rem;
+            margin-bottom: 24px;
+        }}}}
+        .chart-header h1 {{{{
+            color: rgba(226, 232, 240, 0.95);
+            font-size: 1.4rem;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }}}}
+        .chart-header p {{{{
+            color: rgba(148, 163, 184, 0.6);
+            font-size: 0.82rem;
             font-weight: 300;
-            letter-spacing: 1px;
-        }}
-        canvas {{ max-height: 500px; }}
+        }}}}
+        .chart-container {{{{
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(99, 102, 241, 0.12);
+            border-radius: 20px;
+            padding: 32px 28px 24px;
+            box-shadow:
+                0 4px 24px rgba(0, 0, 0, 0.25),
+                0 0 80px rgba(99, 102, 241, 0.04),
+                inset 0 1px 0 rgba(255, 255, 255, 0.04);
+            position: relative;
+            overflow: hidden;
+        }}}}
+        .chart-container::before {{{{
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg,
+                transparent,
+                rgba(99, 102, 241, 0.3),
+                rgba(79, 142, 247, 0.3),
+                transparent
+            );
+        }}}}
+        canvas {{{{
+            max-height: 480px;
+        }}}}
+        .chart-footer {{{{
+            text-align: center;
+            margin-top: 16px;
+            color: rgba(148, 163, 184, 0.35);
+            font-size: 0.72rem;
+            font-weight: 300;
+        }}}}
     </style>
 </head>
 <body>
-    <div class="chart-container">
-        <h1>📈 {title}</h1>
-        <canvas id="forecastChart"></canvas>
+    <div class="chart-wrapper">
+        <div class="chart-header">
+            <h1>{title}</h1>
+            <p>Generated by Prophet MCP Server</p>
+        </div>
+        <div class="chart-container">
+            <canvas id="forecastChart"></canvas>
+        </div>
+        <div class="chart-footer">
+            Powered by Meta Prophet &middot; Chart.js
+        </div>
     </div>
     <script>
         const ctx = document.getElementById('forecastChart').getContext('2d');
-        const config = {json.dumps(chartjs_config, indent=2)};
-
-        // Override chart options for dark theme styling
-        config.options = config.options || {{}};
-        config.options.responsive = true;
-        config.options.plugins = {{
-            legend: {{
-                labels: {{
-                    color: '#ccc',
-                    font: {{ size: 13 }},
-                    usePointStyle: true,
-                    filter: function(item) {{
-                        return !item.text.includes('Confidence');
-                    }}
-                }}
-            }},
-            tooltip: {{
-                backgroundColor: 'rgba(0,0,0,0.8)',
-                titleColor: '#fff',
-                bodyColor: '#ddd',
-                cornerRadius: 8,
-                padding: 12
-            }}
-        }};
-        config.options.scales = {{
-            x: {{
-                ticks: {{ color: '#aaa', maxRotation: 45, font: {{ size: 11 }} }},
-                grid: {{ color: 'rgba(255,255,255,0.05)' }}
-            }},
-            y: {{
-                beginAtZero: true,
-                ticks: {{ color: '#aaa', font: {{ size: 11 }} }},
-                grid: {{ color: 'rgba(255,255,255,0.08)' }}
-            }}
-        }};
-
+        const config = {config_json};
         new Chart(ctx, config);
     </script>
 </body>
 </html>"""
+
 
 
 # ===== Main =====
@@ -169,10 +187,13 @@ if __name__ == "__main__":
 
     if result and "result" in result:
         try:
-            content_text = result["result"]["content"][0]["text"]
+            content = result["result"]["content"]
+            summary = content[0].get("text", "")
+            print(summary[:500])
+            print()
 
-            # Extract Chart.js config from the tool output
-            chartjs_config = extract_chartjs_config(content_text)
+            # Extract Chart.js config from content[1]
+            chartjs_config = extract_chartjs_config(content)
 
             if chartjs_config:
                 html = generate_html(chartjs_config, title="Prophet Forecast: Daily Conversions")
@@ -186,9 +207,8 @@ if __name__ == "__main__":
                 webbrowser.open(f"file://{os.path.abspath(output_path)}")
                 print("Opened in browser!")
             else:
-                print("Could not extract Chart.js config from tool output.")
-                print("Raw output (first 500 chars):")
-                print(content_text[:500])
+                print("Could not extract Chart.js config from response.")
+                print("Make sure the server is returning the new two-content-item format.")
 
         except Exception as e:
             print(f"Error: {e}")

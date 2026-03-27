@@ -122,12 +122,20 @@ def handle_tool_call(params):
                 "content": [{"type": "text", "text": f"Forecast error: {data['error']}"}],
             }
 
-        # Extract pre-formatted summary (includes Chart.js config)
+        # Extract pre-formatted summary and Chart.js config
         summary = ""
-        if isinstance(data, dict) and "meta" in data and "summary" in data["meta"]:
-            summary = data["meta"]["summary"].strip()
+        chartjs_json = ""
+        if isinstance(data, dict) and "meta" in data:
+            if "summary" in data["meta"]:
+                summary = data["meta"]["summary"].strip()
+            if "chartjs" in data["meta"]:
+                chartjs_json = json.dumps(data["meta"]["chartjs"])
 
-        return {"content": [{"type": "text", "text": summary}]}
+        content = [{"type": "text", "text": summary}]
+        if chartjs_json:
+            content.append({"type": "text", "text": f"chartjs_config:{chartjs_json}"})
+
+        return {"content": content}
 
     return {
         "isError": True,
@@ -275,37 +283,6 @@ def forecast_time_series(arguments):
     else:
         trend_direction = "N/A"
 
-    # Build Chart.js cap/floor line datasets
-    limit_datasets = ""
-    if growth == "logistic":
-        cap_line_data = json.dumps([cap] * len(out))
-        limit_datasets += f""",
-            {{
-                "label": "Cap ({cap})",
-                "data": {cap_line_data},
-                "borderWidth": 2,
-                "fill": false,
-                "pointRadius": 0,
-                "backgroundColor": "rgba(255, 99, 132, 0.0)",
-                "borderColor": "rgba(255, 99, 132, 0.8)",
-                "borderDash": [10, 5],
-                "order": 2
-            }}"""
-        if floor is not None:
-            floor_line_data = json.dumps([floor] * len(out))
-            limit_datasets += f""",
-            {{
-                "label": "Floor ({floor})",
-                "data": {floor_line_data},
-                "borderWidth": 2,
-                "fill": false,
-                "pointRadius": 0,
-                "backgroundColor": "rgba(255, 165, 0, 0.0)",
-                "borderColor": "rgba(255, 165, 0, 0.8)",
-                "borderDash": [10, 5],
-                "order": 2
-            }}"""
-
     formatted_output = f"""
 ### Prophet Forecast Data ###
 
@@ -336,74 +313,10 @@ Please review this data in detail and provide an analysis of the trends and pred
 {table_body}
 
 Output format: Recommend using Chart.js to visualize the forecast data. Show the historical data as red points and the forecast as a blue dashed line with the confidence interval as a shaded region.
-
-Use these Chart.js settings to render the chart:
-chartjs = {{
-    "type": "line",
-    "data": {{
-        "labels": {json.dumps(out["ds"].tolist())},
-        "datasets": [
-            {{
-                "label": "Confidence Lower",
-                "data": {json.dumps(out["yhat_lower"].tolist())},
-                "borderWidth": 0,
-                "pointRadius": 0,
-                "fill": false,
-                "backgroundColor": "rgba(54, 162, 235, 0.0)",
-                "borderColor": "rgba(54, 162, 235, 0.0)",
-                "hidden": false
-            }},
-            {{
-                "label": "Confidence Upper",
-                "data": {json.dumps(out["yhat_upper"].tolist())},
-                "borderWidth": 0,
-                "pointRadius": 0,
-                "fill": "-1",
-                "backgroundColor": "rgba(54, 162, 235, 0.15)",
-                "borderColor": "rgba(54, 162, 235, 0.0)"
-            }},
-            {{
-                "label": "Forecast (yhat)",
-                "data": {json.dumps(out["yhat"].tolist())},
-                "borderWidth": 2,
-                "fill": false,
-                "pointRadius": 0,
-                "backgroundColor": "rgba(54, 162, 235, 0.2)",
-                "borderColor": "rgba(54, 162, 235, 0.8)",
-                "borderDash": [5, 5],
-                "order": 1
-            }},
-            {{
-                "label": "Actuals",
-                "data": {json.dumps(([float(v) for v in y] + [None] * f))},
-                "fill": false,
-                "pointRadius": 6,
-                "pointHoverRadius": 8,
-                "borderWidth": 0,
-                "backgroundColor": "rgba(255, 107, 107, 1)",
-                "borderColor": "rgba(255, 107, 107, 0.0)",
-                "order": 0
-            }}{limit_datasets}
-        ]
-    }},
-    "options": {{
-        "responsive": true,
-        "plugins": {{
-            "legend": {{
-                "labels": {{
-                    "filter": "function(item) {{ return !item.text.includes('Confidence'); }}"
-                }}
-            }}
-        }},
-        "scales": {{
-            "y": {{
-                "beginAtZero": true
-            }}
-        }}
-    }}
-}}
-
 """
+
+    # --- Build Chart.js config as a proper dict ---
+    chartjs_config = _build_chartjs_config(out, y, f, growth, cap, floor)
 
     meta = {
         "f": f,
@@ -412,6 +325,7 @@ chartjs = {{
         "end": df["ds"].max().strftime("%Y-%m-%dT%H:%M:%S"),
         "growth": growth,
         "summary": formatted_output,
+        "chartjs": chartjs_config,
     }
 
     if growth == "logistic":
@@ -422,5 +336,217 @@ chartjs = {{
     return {
         "meta": meta,
         "forecast": out.to_dict(orient="records"),
+    }
+
+
+# ============================
+# Chart.js Config Builder
+# ============================
+
+def _build_chartjs_config(out, y, f, growth, cap, floor):
+    """
+    Builds a Chart.js-compatible config dict with premium visual styling.
+
+    Returns a dict that can be JSON-serialized and used directly by Chart.js.
+    Design features:
+    - Gradient confidence band (indigo/purple tones)
+    - Electric blue forecast line (solid for fitted, dashed for future)
+    - Coral/salmon actuals with white-bordered circle markers
+    - Vertical annotation line at the forecast boundary
+    - Cap/floor reference lines for logistic growth
+    - Dark-themed scales, tooltips, and legend
+    """
+    n_hist = len(y)
+    labels = out["ds"].tolist()
+
+    # --- Datasets ---
+
+    # 1. Confidence Lower (invisible — used as fill boundary)
+    ds_conf_lower = {
+        "label": "Confidence Lower",
+        "data": out["yhat_lower"].tolist(),
+        "borderWidth": 0,
+        "pointRadius": 0,
+        "fill": False,
+        "backgroundColor": "rgba(99, 102, 241, 0.0)",
+        "borderColor": "rgba(99, 102, 241, 0.0)",
+        "hidden": False,
+    }
+
+    # 2. Confidence Upper (gradient fill down to Lower)
+    ds_conf_upper = {
+        "label": "Confidence Upper",
+        "data": out["yhat_upper"].tolist(),
+        "borderWidth": 0,
+        "pointRadius": 0,
+        "fill": "-1",
+        "backgroundColor": "rgba(99, 102, 241, 0.12)",
+        "borderColor": "rgba(99, 102, 241, 0.0)",
+    }
+
+    # 3. Forecast line — fitted (historical) portion is solid, forecast is dashed
+    #    We split into two datasets to get different line styles
+    fitted_data = out["yhat"].tolist()[:n_hist] + [None] * f
+    future_data = [None] * (n_hist - 1) + [out["yhat"].tolist()[n_hist - 1]] + out["yhat"].tolist()[n_hist:]
+
+    ds_fitted = {
+        "label": "Fitted (Model)",
+        "data": fitted_data,
+        "borderWidth": 2.5,
+        "fill": False,
+        "pointRadius": 0,
+        "backgroundColor": "rgba(79, 142, 247, 0.15)",
+        "borderColor": "rgba(79, 142, 247, 0.6)",
+        "tension": 0.3,
+        "order": 2,
+    }
+
+    ds_forecast = {
+        "label": "Forecast (yhat)",
+        "data": future_data,
+        "borderWidth": 2.5,
+        "fill": False,
+        "pointRadius": 4,
+        "pointStyle": "rectRot",
+        "pointBackgroundColor": "rgba(79, 142, 247, 1)",
+        "pointBorderColor": "rgba(255, 255, 255, 0.9)",
+        "pointBorderWidth": 1.5,
+        "backgroundColor": "rgba(79, 142, 247, 0.25)",
+        "borderColor": "rgba(79, 142, 247, 1)",
+        "borderDash": [6, 4],
+        "tension": 0.3,
+        "order": 1,
+    }
+
+    # 4. Actuals — coral circles with white border
+    actuals_data = [float(v) for v in y] + [None] * f
+    ds_actuals = {
+        "label": "Actuals",
+        "data": actuals_data,
+        "fill": False,
+        "pointRadius": 5,
+        "pointHoverRadius": 8,
+        "pointStyle": "circle",
+        "pointBackgroundColor": "rgba(255, 107, 107, 1)",
+        "pointBorderColor": "rgba(255, 255, 255, 0.85)",
+        "pointBorderWidth": 2,
+        "borderWidth": 1.5,
+        "borderColor": "rgba(255, 107, 107, 0.35)",
+        "backgroundColor": "rgba(255, 107, 107, 0.08)",
+        "showLine": True,
+        "order": 0,
+    }
+
+    datasets = [ds_conf_lower, ds_conf_upper, ds_fitted, ds_forecast, ds_actuals]
+
+    # 5. Cap & Floor lines for logistic growth
+    if growth == "logistic":
+        if cap is not None:
+            datasets.append({
+                "label": f"Cap ({cap})",
+                "data": [cap] * len(out),
+                "borderWidth": 1.5,
+                "fill": False,
+                "pointRadius": 0,
+                "backgroundColor": "rgba(239, 68, 68, 0.0)",
+                "borderColor": "rgba(239, 68, 68, 0.55)",
+                "borderDash": [10, 6],
+                "order": 3,
+            })
+        if floor is not None:
+            datasets.append({
+                "label": f"Floor ({floor})",
+                "data": [floor] * len(out),
+                "borderWidth": 1.5,
+                "fill": False,
+                "pointRadius": 0,
+                "backgroundColor": "rgba(251, 191, 36, 0.0)",
+                "borderColor": "rgba(251, 191, 36, 0.55)",
+                "borderDash": [10, 6],
+                "order": 3,
+            })
+
+    # --- Annotation: vertical line at forecast boundary ---
+    forecast_boundary_label = labels[n_hist - 1] if n_hist <= len(labels) else labels[-1]
+
+    # --- Chart.js options ---
+    options = {
+        "responsive": True,
+        "maintainAspectRatio": True,
+        "interaction": {
+            "mode": "index",
+            "intersect": False,
+        },
+        "plugins": {
+            "legend": {
+                "position": "top",
+                "labels": {
+                    "usePointStyle": True,
+                    "padding": 16,
+                    "font": {"size": 12, "family": "'Inter', 'Segoe UI', sans-serif"},
+                    "color": "rgba(203, 213, 225, 0.9)",
+                    "filter": "__FILTER_FN__",
+                },
+            },
+            "tooltip": {
+                "backgroundColor": "rgba(15, 23, 42, 0.92)",
+                "titleColor": "#e2e8f0",
+                "bodyColor": "#cbd5e1",
+                "borderColor": "rgba(99, 102, 241, 0.3)",
+                "borderWidth": 1,
+                "cornerRadius": 10,
+                "padding": 14,
+                "titleFont": {"size": 13, "weight": "bold"},
+                "bodyFont": {"size": 12},
+                "displayColors": True,
+                "filter": "__TOOLTIP_FILTER_FN__",
+            },
+            "annotation": {
+                "annotations": {
+                    "forecastLine": {
+                        "type": "line",
+                        "xMin": forecast_boundary_label,
+                        "xMax": forecast_boundary_label,
+                        "borderColor": "rgba(148, 163, 184, 0.45)",
+                        "borderWidth": 2,
+                        "borderDash": [4, 4],
+                        "label": {
+                            "display": True,
+                            "content": "Forecast →",
+                            "position": "start",
+                            "backgroundColor": "rgba(99, 102, 241, 0.75)",
+                            "color": "#fff",
+                            "font": {"size": 11, "weight": "bold"},
+                            "padding": 6,
+                            "cornerRadius": 4,
+                        },
+                    }
+                }
+            },
+        },
+        "scales": {
+            "x": {
+                "ticks": {
+                    "color": "rgba(148, 163, 184, 0.7)",
+                    "maxRotation": 45,
+                    "font": {"size": 11},
+                },
+                "grid": {"color": "rgba(148, 163, 184, 0.06)"},
+            },
+            "y": {
+                "beginAtZero": False,
+                "ticks": {
+                    "color": "rgba(148, 163, 184, 0.7)",
+                    "font": {"size": 11},
+                },
+                "grid": {"color": "rgba(148, 163, 184, 0.08)"},
+            },
+        },
+    }
+
+    return {
+        "type": "line",
+        "data": {"labels": labels, "datasets": datasets},
+        "options": options,
     }
 

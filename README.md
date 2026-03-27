@@ -22,17 +22,19 @@ Choose the right forecasting model for your scenario:
 Supports daily, hourly, weekly, and monthly time series via the `freq` parameter — use the frequency that matches your input data.
 
 ### 4. LLM-Friendly Output
-Returns data in a format optimized for Large Language Models:
-- **Plain-English Summaries:** Instant context on trends (e.g., *"Trending UPWARD by +51.7%"*).
-- **Statistical Breakdowns:** Historical vs. Forecasted means, min/max, standard deviations.
-- **Chart.js Config:** Ready-to-render visualization config for web deployment.
+Returns data in a structured, two-part format optimized for Large Language Models:
+- **`content[0]` — Text Summary:** Plain-English analysis with trend direction (e.g., *"UPWARD +26.1%"*), statistical breakdowns, growth model details, and a full forecast data table.
+- **`content[1]` — Chart.js Config:** A proper JSON payload (`chartjs_config:{...}`) ready for visualization — no regex parsing needed.
 
-### 5. Interactive Visualization
-Includes Chart.js configuration in every response with:
-- Red dots for actual historical data
-- Dashed blue line for forecast predictions
-- Shaded confidence interval band
-- Red/orange dashed lines for cap/floor (in logistic mode)
+### 5. Premium Interactive Visualization
+Every response includes a Chart.js configuration with:
+- 🟣 Indigo gradient **confidence band** (shaded between upper/lower bounds)
+- 🔵 Solid blue **fitted line** for historical model fit
+- 🔵 Dashed blue **forecast line** with diamond markers for future predictions
+- 🔴 Coral **actuals** with white-bordered circle markers
+- 📍 Vertical **"Forecast →" annotation** marking where predictions begin
+- 🔴 Red/🟠 orange dashed **cap/floor lines** for logistic growth
+- 🌙 Premium **dark theme** with glassmorphism styling
 
 ### 6. Robust Error Handling
 Input validation with clear error messages for:
@@ -47,69 +49,51 @@ Input validation with clear error messages for:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  1. LLM sends your historical data (dates + values)        │
+│  1. LLM sends historical data (dates + values) via MCP     │
 │  2. User selects growth model (linear or logistic)          │
-│  3. Prophet model learns the pattern and generates forecast │
-│  4. Response includes:                                      │
-│     ├── Human-readable summary with trend analysis          │
-│     ├── Growth model info (cap/floor for logistic)          │
-│     ├── Forecast data table                                 │
-│     └── Chart.js config for instant visualization           │
+│  3. Prophet model learns patterns and generates forecast    │
+│  4. Response contains two content items:                    │
+│     ├── content[0]: Human-readable summary + data table     │
+│     └── content[1]: Chart.js JSON config for visualization  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 📊 Real-World Example
+## 📊 Response Format
 
-You tracked daily website conversions over 10 days and want to forecast the next 5 days. You know conversions can never exceed 25 (team capacity) or drop below 5 (baseline organic traffic), so you use **logistic growth**:
+The MCP `tools/call` response returns **two content items**:
 
-### Input
-```json
-{
-  "ds": ["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04", "2025-01-05",
-         "2025-01-06", "2025-01-07", "2025-01-08", "2025-01-09", "2025-01-10"],
-  "y": [10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
-  "periods": 5,
-  "growth": "logistic",
-  "cap": 25,
-  "floor": 5
-}
-```
-
-### Output
+### content[0] — Text Summary
 ```text
 ### Prophet Forecast Data ###
 
-Growth model used: LOGISTIC (cap=25, floor=5)
+Growth model used: LOGISTIC (cap=120, floor=30)
 
 Summary of forecast metrics:
-  - Historical Period: 2025-01-01 to 2025-01-10
-  - Forecast Periods: 5
-  - Trend Direction: UPWARD (+51.7% vs historical mean)
+  - Historical Period: 2025-02-01 to 2025-03-02
+  - Trend Direction: UPWARD (+26.1% vs historical mean)
 
-Growth Model: LOGISTIC
-  - Saturating Maximum (cap): 25
-  - Saturating Minimum (floor): 5
-  - The forecast follows an S-curve that naturally flattens as it approaches the cap/floor.
-
-Date       | yhat  | yhat_lower | yhat_upper
+Date | yhat | yhat_lower | yhat_upper
 -------------------------------------
-2025-01-11 | 20.00 | 19.50      | 20.50
+2025-03-03 | 79.56 | 76.93 | 81.98
 ...
-2025-01-15 | 23.80 | 22.90      | 24.70
-
-chartjs = { ... }
 ```
 
-The logistic model ensures the forecast **naturally saturates** near 25 instead of growing unbounded — because Prophet's math respects the cap.
+### content[1] — Chart.js JSON
+```text
+chartjs_config:{"type":"line","data":{"labels":[...],"datasets":[...]},"options":{...}}
+```
+
+This is valid JSON prefixed with `chartjs_config:` — parse it as:
+```python
+cfg_json = content[1]["text"][len("chartjs_config:"):]
+config = json.loads(cfg_json)
+```
 
 ---
 
 ## 🛠️ Tool: `forecast_time_series`
-
-### Description
-Ingests time-series data and returns a future forecast using either linear or logistic growth, with a detailed text summary and Chart.js visualization config.
 
 ### Input Parameters
 
@@ -121,7 +105,7 @@ Ingests time-series data and returns a future forecast using either linear or lo
 | `growth` | `string` | No | `"linear"` | Growth model: `"linear"` or `"logistic"` |
 | `cap` | `number` | When logistic | — | Saturating maximum (forecast won't exceed this) |
 | `floor` | `number` | No | — | Saturating minimum (forecast won't go below this) |
-| `freq` | `string` | No | `"D"` | Time series frequency: `"D"` (daily), `"H"` (hourly), `"W"` (weekly), `"MS"` (monthly) |
+| `freq` | `string` | No | `"D"` | Time series frequency: `"D"`, `"H"`, `"W"`, `"MS"` |
 
 ### When to Use Each Growth Model
 
@@ -181,10 +165,10 @@ pip install -r requirements.txt
 
 ### 2. Configuration
 
-The server uses Bearer Token authentication. Set the `MCP_TOKEN` environment variable, or it defaults to the value in `app.py`:
+The server uses Bearer Token authentication. Set the `MCP_TOKEN` environment variable:
 
 ```bash
-# Set your token (recommended for production)
+# Set your token (required)
 export MCP_TOKEN="your-secure-token-here"
 ```
 
@@ -194,7 +178,7 @@ export MCP_TOKEN="your-secure-token-here"
 
 ### Local Development
 ```bash
-python app.py
+MCP_TOKEN="your-token" python app.py
 ```
 
 ### Production (Cloud)
@@ -249,30 +233,27 @@ curl -X POST http://localhost:3000/mcp \
 
 ## 🧪 Testing & Visualization
 
-### Local Testing Script
-
+### Basic Test
 ```bash
-python examples/plot_forecast.py
+MCP_TOKEN="your-token" python examples/plot_forecast.py
 ```
 
-This script will:
-1. Call your MCP server's API
-2. Extract the Chart.js config from the response
-3. Generate `forecast_chart.html` with an interactive chart
-4. Open it in your default browser
+### Marketing Forecast Test (30-day real-world scenario)
+```bash
+MCP_TOKEN="your-token" python examples/test_gcp_marketing.py
+```
 
-The generated chart features a dark glassmorphism theme with:
-- 🔴 Red dots — Historical actuals
-- 🔵 Dashed blue line — Forecast predictions
-- 🟦 Shaded blue band — Confidence interval
-- 🔴 Red dashed line — Cap (logistic mode)
-- 🟠 Orange dashed line — Floor (logistic mode)
+Both scripts will:
+1. Call your MCP server's API
+2. Extract the Chart.js config from `content[1]`
+3. Generate an interactive HTML chart with premium dark theme
+4. Open it in your default browser
 
 ---
 
 ## ☁️ Cloud Deployment
 
-For deploying to Google Cloud (or any cloud provider), you need:
+For deploying to Google Cloud Run (or any cloud provider), you need:
 
 ```
 app.py
@@ -290,10 +271,11 @@ The server binds to `0.0.0.0` and reads the `PORT` environment variable automati
 ## 🔐 Security
 
 - Bearer Token authentication on all `/mcp` endpoints
-- Token configurable via `MCP_TOKEN` environment variable
+- Token configurable via `MCP_TOKEN` environment variable (no defaults — must be explicitly set)
 - Debug mode disabled by default (enable via `MCP_DEBUG=true`)
 - JSON-RPC error handling with proper error codes
 - Input validation on all tool parameters
+- No sensitive data stored in source code
 
 ---
 
